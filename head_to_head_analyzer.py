@@ -21,71 +21,33 @@ from dotenv import load_dotenv
 # Load API keys from .env file
 load_dotenv()
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
-FOOTBALL_DATA_KEY = os.getenv("FOOTBALL_DATA_KEY")
 
 from datetime import datetime
 
 def fetch_today_fixtures():
     today = datetime.now().strftime('%Y-%m-%d')
-    fixtures = []
-    if API_FOOTBALL_KEY:
-        url = f"https://v3.football.api-sports.io/fixtures?date={today}"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            fixtures = response.json().get("response", [])
-        else:
-            print(f"API-Football error (fixtures): {response.status_code}")
-    elif FOOTBALL_DATA_KEY:
-        url = f"https://api.football-data.org/v4/matches?dateFrom={today}&dateTo={today}"
-        headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            # Football-Data.org returns matches in 'matches' key
-            fixtures = response.json().get("matches", [])
-        else:
-            print(f"Football-Data.org error (fixtures): {response.status_code}")
+    url = f"https://v3.football.api-sports.io/fixtures?date={today}"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json().get("response", [])
     else:
-        print("No API key provided for either API-Football or Football-Data.org.")
-    return fixtures
+        print(f"API-Football error (fixtures): {response.status_code}")
+        return []
 
-# Get team IDs and names from fixture
 def get_teams_from_fixture(fixture):
-    if API_FOOTBALL_KEY:
-        home = fixture["teams"]["home"]
-        away = fixture["teams"]["away"]
-        return home["id"], away["id"], home["name"], away["name"]
-    elif FOOTBALL_DATA_KEY:
-        home = fixture["homeTeam"]
-        away = fixture["awayTeam"]
-        # Football-Data.org does not provide team IDs in the same way, so use names only
-        return None, None, home["name"], away["name"]
+    home = fixture["teams"]["home"]
+    away = fixture["teams"]["away"]
+    return home["id"], away["id"], home["name"], away["name"]
 
 def fetch_h2h(team1_id, team2_id, team1_name, team2_name):
-    if API_FOOTBALL_KEY and team1_id and team2_id:
-        url = f"https://v3.football.api-sports.io/fixtures/headtohead?h2h={team1_id}-{team2_id}"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"API-Football error: {response.status_code}")
-            return None
-    elif FOOTBALL_DATA_KEY:
-        # Football-Data.org does not provide direct h2h endpoint, so filter matches manually
-        url = f"https://api.football-data.org/v4/teams/{team1_name}/matches?dateFrom=1900-01-01&dateTo={datetime.now().strftime('%Y-%m-%d')}"
-        headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            matches = response.json().get("matches", [])
-            # Filter only matches against team2_name
-            h2h_matches = [m for m in matches if m.get("awayTeam", {}).get("name") == team2_name or m.get("homeTeam", {}).get("name") == team2_name]
-            return {"response": h2h_matches}
-        else:
-            print(f"Football-Data.org error: {response.status_code}")
-            return None
+    url = f"https://v3.football.api-sports.io/fixtures/headtohead?h2h={team1_id}-{team2_id}"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
     else:
-        print("No API key provided for either API-Football or Football-Data.org.")
+        print(f"API-Football error: {response.status_code}")
         return None
 
 def analyze_h2h_results(h2h_data, team1_name, team2_name):
