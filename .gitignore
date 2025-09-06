@@ -2,6 +2,7 @@
 .env
 
 # Ignore Python cache and build files
+soccer_head_to_head_analyser/
 __pycache__/
 *.pyc
 *.pyo
