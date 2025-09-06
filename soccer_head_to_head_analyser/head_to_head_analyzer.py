@@ -1,3 +1,32 @@
+def fetch_team_form(team_id):
+    # Fetch last 5 matches for the team
+    url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print(f"API-Football error (form): {response.status_code}")
+        return None
+    matches = response.json().get("response", [])
+    wins, draws, losses, goals_for, goals_against = 0, 0, 0, 0, 0
+    for match in matches:
+        team_side = "home" if match["teams"]["home"]["id"] == team_id else "away"
+        goals_team = match["goals"][team_side]
+        goals_opp = match["goals"]["away" if team_side == "home" else "home"]
+        goals_for += goals_team if goals_team is not None else 0
+        goals_against += goals_opp if goals_opp is not None else 0
+        if goals_team > goals_opp:
+            wins += 1
+        elif goals_team == goals_opp:
+            draws += 1
+        else:
+            losses += 1
+    return {
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_for": goals_for,
+        "goals_against": goals_against
+    }
   
 
 """
@@ -89,20 +118,96 @@ def fetch_h2h(team1_id, team2_id, team1_name, team2_name):
         return None
 
 def analyze_h2h_results(h2h_data, team1_name, team2_name):
-    all_over_1_5 = True
-    for match in h2h_data.get("response", []):
-        goals_home = match.get("goals", {}).get("home")
-        goals_away = match.get("goals", {}).get("away")
-        goals_home = goals_home if goals_home is not None else 0
-        goals_away = goals_away if goals_away is not None else 0
+    # Best bet recommendation logic (>70% historical success, head-to-head only)
+    best_bet = None
+    if total_matches > 0:
+        draw_rate = draws / total_matches
+        team1_win_rate = team1_wins / total_matches
+        team2_win_rate = team2_wins / total_matches
+        over_1_5_rate = over_1_5_count / total_matches
+        over_2_5_rate = over_2_5_count / total_matches
+
+        if draw_rate > 0.7:
+            best_bet = "Draw (>70% h2h)"
+        elif team1_win_rate > 0.7:
+            best_bet = f"{team1_name} to win (>70% h2h)"
+        elif team2_win_rate > 0.7:
+            best_bet = f"{team2_name} to win (>70% h2h)"
+        elif over_2_5_rate > 0.7:
+            best_bet = "Over 2.5 goals (>70% h2h)"
+        elif over_1_5_rate > 0.7:
+            best_bet = "Over 1.5 goals (>70% h2h)"
+        elif home_1x and (team1_win_rate + draw_rate) > 0.7:
+            best_bet = f"{team1_name} win or draw (1X) (>70% h2h)"
+        elif away_2x and (team2_win_rate + draw_rate) > 0.7:
+            best_bet = f"{team2_name} win or draw (2X) (>70% h2h)"
+        else:
+            best_bet = "No safest bet (>70% h2h)"
+    else:
+        best_bet = "No head-to-head data"
+    matches = h2h_data.get("response", [])
+    if not matches:
+        return None  # No head-to-head data
+
+    team1_wins = 0
+    team2_wins = 0
+    draws = 0
+    over_1_5_count = 0
+    over_2_5_count = 0
+    total_matches = 0
+
+    for match in matches:
+        goals_home = match.get("goals", {}).get("home", 0)
+        goals_away = match.get("goals", {}).get("away", 0)
         total_goals = goals_home + goals_away
-        if total_goals <= 1.5:
-            all_over_1_5 = False
-            break
+        if total_goals > 1.5:
+            over_1_5_count += 1
+        if total_goals > 2.5:
+            over_2_5_count += 1
+        total_matches += 1
+
+        # Determine winner
+        home_name = match.get("teams", {}).get("home", {}).get("name", "")
+        away_name = match.get("teams", {}).get("away", {}).get("name", "")
+        if goals_home > goals_away:
+            if home_name == team1_name:
+                team1_wins += 1
+            elif home_name == team2_name:
+                team2_wins += 1
+        elif goals_away > goals_home:
+            if away_name == team1_name:
+                team1_wins += 1
+            elif away_name == team2_name:
+                team2_wins += 1
+        else:
+            draws += 1
+
+    # Prediction logic
+    if draws > team1_wins and draws > team2_wins:
+        predicted_winner = "Draw"
+    elif team1_wins > team2_wins:
+        predicted_winner = team1_name
+    elif team2_wins > team1_wins:
+        predicted_winner = team2_name
+    else:
+        predicted_winner = "Draw"
+
+    likely_over_1_5 = over_1_5_count / total_matches >= 0.5  # Over 50% matches
+    likely_over_2_5 = over_2_5_count / total_matches >= 0.5
+    home_1x = team1_wins + draws > team2_wins  # Home win or draw
+    away_2x = team2_wins + draws > team1_wins  # Away win or draw
+
     result = {
         "team1": team1_name,
         "team2": team2_name,
-        "all_over_1_5": all_over_1_5
+        "predicted_winner": predicted_winner,
+        "likely_over_1_5": likely_over_1_5,
+        "likely_over_2_5": likely_over_2_5,
+        "home_1x": home_1x,
+        "away_2x": away_2x,
+        "total_matches": total_matches,
+        "draws": draws,
+        "best_bet": best_bet
     }
     return result
 
@@ -113,10 +218,17 @@ def automate_daily_h2h_analysis():
         team1_id, team2_id, team1_name, team2_name = get_teams_from_fixture(fixture)
         print(f"Analyzing {team1_name} vs {team2_name}...")
         h2h_data = fetch_h2h(team1_id, team2_id, team1_name, team2_name)
+        form1 = fetch_team_form(team1_id) if team1_id else None
+        form2 = fetch_team_form(team2_id) if team2_id else None
         if h2h_data:
             analysis = analyze_h2h_results(h2h_data, team1_name, team2_name)
-            if analysis["all_over_1_5"]:
-                print(f"{team1_name} vs {team2_name}: All head-to-head matches are over 1.5 goals!")
+            if analysis:
+                analysis["form_team1"] = form1
+                analysis["form_team2"] = form2
+                print(f"{team1_name} vs {team2_name}: Predicted winner - {analysis['predicted_winner']}; Draws: {analysis['draws']}; 1X (home win or draw): {analysis['home_1x']}; 2X (away win or draw): {analysis['away_2x']}; Likely over 1.5 goals: {analysis['likely_over_1_5']}; Likely over 2.5 goals: {analysis['likely_over_2_5']} (based on {analysis['total_matches']} head-to-head matches)")
+                print(f"Best bet: {analysis['best_bet']}")
+                print(f"Recent form {team1_name}: {form1}")
+                print(f"Recent form {team2_name}: {form2}")
                 results.append(analysis)
         time.sleep(1)  # Avoid hitting API rate limits
     return results
@@ -124,7 +236,9 @@ def automate_daily_h2h_analysis():
 def save_results(results, filename="h2h_results.txt"):
     with open(filename, "w", encoding="utf-8") as f:
         for r in results:
-            f.write(f"{r['team1']} vs {r['team2']}: All head-to-head matches are over 1.5 goals!\n")
+            f.write(f"{r['team1']} vs {r['team2']}: Predicted winner - {r['predicted_winner']}; Draws: {r['draws']}; 1X (home win or draw): {r['home_1x']}; 2X (away win or draw): {r['away_2x']}; Likely over 1.5 goals: {r['likely_over_1_5']}; Likely over 2.5 goals: {r['likely_over_2_5']} (based on {r['total_matches']} head-to-head matches); Best bet: {r['best_bet']}\n")
+            f.write(f"Recent form {r['team1']}: {r.get('form_team1')}\n")
+            f.write(f"Recent form {r['team2']}: {r.get('form_team2')}\n")
     print(f"Results saved to {filename}")
 
 if __name__ == "__main__":
